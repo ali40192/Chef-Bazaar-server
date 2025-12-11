@@ -3,6 +3,7 @@ const cors = require("cors");
 const app = express();
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const port = process.env.PORT || 3000;
 
 ///midleware
@@ -32,6 +33,12 @@ async function run() {
       const meals = await mealsCollection.find().limit(6).toArray();
       res.send(meals);
     });
+    ///////1.2.get all meals for all meals page
+    app.get("/allmeals", async (req, res) => {
+      const result = await mealsCollection.find().toArray();
+      res.send(result);
+    });
+
     ////2.get single meal
     app.get("/meals/:id", async (req, res) => {
       const id = req.params.id;
@@ -39,12 +46,6 @@ async function run() {
       res.send(result);
     });
 
-    // app.get("/meals/:id", async (req, res) => {
-    //   const id = req.params.id;
-    //   const query = { _id: new ObjectId(id) };
-    //   const meal = await mealsCollection.findOne(query);
-    //   res.send(meal);
-    // });
     ////3.post a meal
     app.post("/meals", async (req, res) => {
       const meal = req.body;
