@@ -26,6 +26,7 @@ async function run() {
 
     const db = client.db("chef_bazaar_db");
     const mealsCollection = db.collection("meals");
+    const orderCollection = db.collection("orders");
 
     ////meals api
     ////1.get all meals
@@ -52,6 +53,39 @@ async function run() {
       const result = await mealsCollection.insertOne(meal);
       res.send(result);
     });
+
+    ///create payment
+    app.post("/create-checkout-session", async (req, res) => {
+      const paymentInfo = req.body;
+
+      const result = await orderCollection.insertOne(paymentInfo);
+
+      const session = await stripe.checkout.sessions.create({
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: paymentInfo.mealName,
+              },
+              unit_amount: paymentInfo.price * 100,
+            },
+            quantity: paymentInfo.quantity,
+          },
+        ],
+        customer_email: paymentInfo.userEmail,
+        mode: "payment",
+        metadata: {
+          foodId: paymentInfo.foodId,
+          orderId: result.insertedId.toString(),
+        },
+        success_url: "http://localhost:5173/dashboard/success",
+        cancel_url: `http://localhost:5173/meals/${paymentInfo?.foodId}`,
+      });
+
+      res.send({ url: session.url }, result);
+    });
+
     ////4.update a meal
     // app.put("/meals/:id", async (req, res) => {
     //   const id = req.params.id;
