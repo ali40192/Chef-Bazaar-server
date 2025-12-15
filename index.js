@@ -4,7 +4,14 @@ const app = express();
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+
 const port = process.env.PORT || 3000;
+
+const crypto = require("crypto");
+
+function generateTrackingId() {
+  return `LCB-${crypto.randomBytes(5).toString("hex").toUpperCase()}`;
+}
 
 ///midleware
 app.use(cors());
@@ -26,7 +33,8 @@ async function run() {
 
     const db = client.db("chef_bazaar_db");
     const mealsCollection = db.collection("meals");
-    const orderCollection = db.collection("orders");
+    const orderCollection = db.collection("order_collection");
+    const paymentCollection = db.collection("payments");
 
     ////meals api
     ////1.get all meals
@@ -38,6 +46,14 @@ async function run() {
     app.get("/allmeals", async (req, res) => {
       const result = await mealsCollection.find().toArray();
       res.send(result);
+    });
+
+    ////get created meals by chef
+    app.get("/mymeals/:email", async (req, res) => {
+      const email = req.params.email;
+      const result = mealsCollection.find({ userEmail: email });
+      const meals = await result.toArray();
+      res.send(meals);
     });
 
     ////2.get single meal
@@ -53,12 +69,25 @@ async function run() {
       const result = await mealsCollection.insertOne(meal);
       res.send(result);
     });
+    /////create my orders
+    app.post("/orders", async (req, res) => {
+      const order = req.body;
+      const result = await orderCollection.insertOne(order);
+      res.send(result);
+    });
+
+    ////get my orders
+    app.get("/orders/:email", async (req, res) => {
+      const email = req.params.email;
+
+      const result = orderCollection.find({ userEmail: email });
+      const orders = await result.toArray();
+      res.send(orders);
+    });
 
     ///create payment
     app.post("/create-checkout-session", async (req, res) => {
       const paymentInfo = req.body;
-
-      const result = await orderCollection.insertOne(paymentInfo);
 
       const session = await stripe.checkout.sessions.create({
         line_items: [
@@ -77,13 +106,78 @@ async function run() {
         mode: "payment",
         metadata: {
           foodId: paymentInfo.foodId,
-          orderId: result.insertedId.toString(),
+          orderId: paymentInfo.orderId,
+          quantity: paymentInfo.quantity,
         },
-        success_url: "http://localhost:5173/dashboard/success",
+        success_url: `http://localhost:5173/dashboard/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `http://localhost:5173/meals/${paymentInfo?.foodId}`,
       });
 
-      res.send({ url: session.url }, result);
+      // Update the order
+      await orderCollection.updateOne(
+        { _id: paymentInfo.orderId },
+
+        { $set: { checkoutSessionId: session.id, paymentStatus: "pending" } }
+      );
+      res.send({ url: session.url });
+    });
+
+    ////payment success//
+    app.patch("/success-payment", async (req, res) => {
+      const sessionId = req.body.session_id;
+
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      console.log(session);
+      const trackingId = generateTrackingId();
+
+      if (session.payment_status === "paid") {
+        // Update orderCollection
+
+        const id = session.metadata.orderId;
+        const query = { _id: new ObjectId(id) };
+
+        const updateDoc = {
+          $set: {
+            paymentStatus: "paid",
+            orderStatus: "confirmed",
+            trackingId: trackingId,
+          },
+        };
+        const updateResult = await orderCollection.updateOne(query, updateDoc);
+
+        // Save payment history to paymentCollection
+        const meal = await mealsCollection.findOne({
+          _id: new ObjectId(session.metadata.foodId),
+        });
+        const paymentExist = await paymentCollection.findOne({
+          transectionId: session.payment_intent,
+        });
+        if (meal && !paymentExist) {
+          const orderInfo = {
+            price: session.amount_total / 100,
+            currency: session.currency,
+            customer_email: session.customer_email,
+            foodId: session.metadata.foodId,
+
+            orderId: session.metadata.orderId,
+            transectionId: session.payment_intent,
+            paymentStatus: session.payment_status,
+            customer_email: session.customer_email,
+            status: "pending",
+            chefId: meal.chefId,
+            mealName: meal.foodName,
+
+            quantity: session.metadata.quantity,
+            paidAt: new Date(),
+          };
+          const insertResult = await paymentCollection.insertOne(orderInfo);
+          return res.send({ updateResult, insertResult });
+        }
+
+        return res.send(updateResult);
+      }
+
+      res.send({ success: false });
     });
 
     ////4.update a meal
