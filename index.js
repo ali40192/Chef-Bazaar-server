@@ -8,6 +8,15 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const port = process.env.PORT || 3000;
 
 const crypto = require("crypto");
+const { log } = require("console");
+
+const admin = require("firebase-admin");
+
+// Initialize Firebase Admin (replace with your service account key path or env vars)
+const serviceAccount = require("./chefbazarfirebaseadminSdk.json"); // Download from Firebase Console
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 function generateTrackingId() {
   return `LCB-${crypto.randomBytes(5).toString("hex").toUpperCase()}`;
@@ -18,6 +27,22 @@ app.use(cors());
 app.use(express.json());
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.fyk0nds.mongodb.net/?appName=Cluster0`;
+
+////jwt verify
+const verifyJWT = async (req, res, next) => {
+  const token = req?.headers?.authorization?.split(" ")[1];
+  console.log(token);
+  if (!token) return res.status(401).send({ message: "Unauthorized Access!" });
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.tokenEmail = decoded.email;
+    console.log(decoded);
+    next();
+  } catch (err) {
+    console.log(err);
+    return res.status(401).send({ message: "Unauthorized Access!", err });
+  }
+};
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -35,6 +60,7 @@ async function run() {
     const mealsCollection = db.collection("meals");
     const orderCollection = db.collection("order_collection");
     const paymentCollection = db.collection("payments");
+    const usersCollection = db.collection("users");
 
     ////meals api
     ////1.get all meals
@@ -77,10 +103,8 @@ async function run() {
     });
 
     ////get my orders
-    app.get("/orders/:email", async (req, res) => {
-      const email = req.params.email;
-
-      const result = orderCollection.find({ userEmail: email });
+    app.get("/orders", verifyJWT, async (req, res) => {
+      const result = orderCollection.find({ userEmail: req.tokenEmail });
       const orders = await result.toArray();
       res.send(orders);
     });
@@ -113,13 +137,13 @@ async function run() {
         cancel_url: `http://localhost:5173/meals/${paymentInfo?.foodId}`,
       });
 
-      // Update the order
-      await orderCollection.updateOne(
-        { _id: paymentInfo.orderId },
-
+      // Update the order (convert id to ObjectId)
+      const orderUpdateResult = await orderCollection.updateOne(
+        { _id: new ObjectId(paymentInfo.orderId) },
         { $set: { checkoutSessionId: session.id, paymentStatus: "pending" } }
       );
-      res.send({ url: session.url });
+      console.log("order updateResult:", orderUpdateResult);
+      res.send({ url: session.url, orderUpdateResult });
     });
 
     ////payment success//
@@ -128,22 +152,25 @@ async function run() {
 
       const session = await stripe.checkout.sessions.retrieve(sessionId);
       console.log(session);
-      const trackingId = generateTrackingId();
 
       if (session.payment_status === "paid") {
-        // Update orderCollection
+        // Generate trackingId once
+        const trackingId = generateTrackingId();
+        console.log("Generated trackingId:", trackingId);
 
+        // Update orderCollection
         const id = session.metadata.orderId;
         const query = { _id: new ObjectId(id) };
-
         const updateDoc = {
           $set: {
             paymentStatus: "paid",
             orderStatus: "confirmed",
+            transectionId: session.payment_intent,
             trackingId: trackingId,
           },
         };
         const updateResult = await orderCollection.updateOne(query, updateDoc);
+        console.log("orderCollection.updateOne result:", updateResult);
 
         // Save payment history to paymentCollection
         const meal = await mealsCollection.findOne({
@@ -158,17 +185,15 @@ async function run() {
             currency: session.currency,
             customer_email: session.customer_email,
             foodId: session.metadata.foodId,
-
             orderId: session.metadata.orderId,
             transectionId: session.payment_intent,
             paymentStatus: session.payment_status,
-            customer_email: session.customer_email,
             status: "pending",
             chefId: meal.chefId,
             mealName: meal.foodName,
-
             quantity: session.metadata.quantity,
             paidAt: new Date(),
+            trackingId: trackingId,
           };
           const insertResult = await paymentCollection.insertOne(orderInfo);
           return res.send({ updateResult, insertResult });
@@ -179,6 +204,53 @@ async function run() {
 
       res.send({ success: false });
     });
+
+    ////user collection create or update
+    app.post("/users", async (req, res) => {
+      const user = req.body;
+
+      user.created_at = new Date().toISOString();
+      user.last_loggedIn = new Date().toISOString();
+      user.role = "user";
+      user.status = "active";
+      const query = { email: user.email };
+      const existingUser = await usersCollection.findOne(query);
+      console.log("existingUser:", !!existingUser);
+
+      if (existingUser) {
+        const result = await usersCollection.updateOne(query, {
+          $set: { last_loggedIn: new Date().toISOString() },
+        });
+        return res.send(result);
+      }
+
+      const result = await usersCollection.insertOne(user);
+      res.send(result);
+    });
+
+    /////get user role
+    app.get("/users/role", verifyJWT, async (req, res) => {
+      const result = await usersCollection.findOne({ email: req.tokenEmail });
+      res.send({ role: result?.role });
+    });
+
+    ///get user data by email
+    app.get("/user/:email", async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email };
+      const userDetails = await usersCollection.findOne(query);
+      res.send(userDetails);
+    });
+
+    /////get payment history
+    // app.get("/payment-history/:email", async (req, res) => {
+    //   const email = req.params.email;
+
+    //   const query = { customer_email: email };
+    //   const cursor = paymentCollection.find(query);
+    //   const payments = await cursor.toArray();
+    //   res.send(payments);
+    // });
 
     ////4.update a meal
     // app.put("/meals/:id", async (req, res) => {
@@ -208,8 +280,6 @@ async function run() {
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
   } finally {
-    // Ensures that the client will close when you finish/error
-    // await client.close();
   }
 }
 run().catch(console.dir);
