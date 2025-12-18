@@ -62,6 +62,9 @@ async function run() {
     const paymentCollection = db.collection("payments");
     const usersCollection = db.collection("users");
     const chefCollection = db.collection("chef-requests");
+    const adminRequestCollection = db.collection("admin-requests");
+    const reviewCollection = db.collection("reviews");
+    const favouriteCollection = db.collection("favourite-meals");
 
     /////varify admin
     const verifyAdmin = async (req, res, next) => {
@@ -95,7 +98,14 @@ async function run() {
     });
     ///////1.2.get all meals for all meals page
     app.get("/allmeals", async (req, res) => {
-      const result = await mealsCollection.find().toArray();
+      const { sort = "price", order = "asc" } = req.query;
+      // console.log(sort, order);
+
+      const sortOptions = {};
+      sortOptions[sort || "price"] = order === "asc" ? 1 : -1;
+
+      const result = await mealsCollection.find().sort(sortOptions).toArray();
+
       res.send(result);
     });
 
@@ -267,6 +277,7 @@ async function run() {
     });
 
     ////become a chef request
+
     app.post("/become-chef", verifyJWT, async (req, res) => {
       const { userDetails } = req.body;
 
@@ -318,6 +329,32 @@ async function run() {
       const result = await usersCollection
         .find({ email: { $ne: adminEmail } })
         .toArray();
+
+      res.send(result);
+    });
+
+    /////create || give review by users
+    app.post("/reviews", async (req, res) => {
+      const review = req.body;
+      const result = await reviewCollection.insertOne(review);
+      res.send(result);
+    });
+    ///////get reviews spicipic meal by id
+
+    app.get("/reviews/:id", async (req, res) => {
+      const id = req.params.id;
+      // console.log(id);
+
+      const result = await reviewCollection.find({ foodId: id }).toArray();
+      res.send(result);
+    });
+
+    //////favourite meal by users
+    app.post("/favourite-meal", async (req, res) => {
+      const favourite = req.body;
+      console.log(favourite);
+
+      const result = await favouriteCollection.insertOne(favourite);
 
       res.send(result);
     });
