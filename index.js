@@ -349,13 +349,44 @@ async function run() {
       res.send(result);
     });
 
+    ////get all reviews
+    app.get("/allreviews", verifyJWT, async (req, res) => {
+      const email = req.tokenEmail;
+      const result = await reviewCollection
+        .find({ reviewerEmail: email })
+        .toArray();
+      res.send(result);
+    });
+
     //////favourite meal by users
     app.post("/favourite-meal", async (req, res) => {
       const favourite = req.body;
-      console.log(favourite);
+
+      // console.log(favourite);
+
+      const alreadyFavourite = await favouriteCollection.findOne({
+        mealId: favourite.mealId,
+      });
+
+      if (alreadyFavourite) {
+        const result = await favouriteCollection.updateOne(
+          { mealId: favourite.mealId },
+          { $set: { addedTime: new Date().toLocaleString() } }
+        );
+        return res.send(result);
+      }
 
       const result = await favouriteCollection.insertOne(favourite);
 
+      res.send(result);
+    });
+
+    ///////get favourite meal by users
+    app.get("/favourite-meal", verifyJWT, async (req, res) => {
+      const email = req.tokenEmail;
+      const query = { userEmail: email };
+      const cursor = favouriteCollection.find(query);
+      const result = await cursor.toArray();
       res.send(result);
     });
 
