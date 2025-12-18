@@ -31,15 +31,15 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@clu
 ////jwt verify
 const verifyJWT = async (req, res, next) => {
   const token = req?.headers?.authorization?.split(" ")[1];
-  console.log(token);
+  // console.log(token);
   if (!token) return res.status(401).send({ message: "Unauthorized Access!" });
   try {
     const decoded = await admin.auth().verifyIdToken(token);
     req.tokenEmail = decoded.email;
-    console.log(decoded);
+    // console.log(decoded);
     next();
   } catch (err) {
-    console.log(err);
+    // console.log(err);
     return res.status(401).send({ message: "Unauthorized Access!", err });
   }
 };
@@ -61,9 +61,34 @@ async function run() {
     const orderCollection = db.collection("order_collection");
     const paymentCollection = db.collection("payments");
     const usersCollection = db.collection("users");
+    const chefCollection = db.collection("chef-requests");
+
+    /////varify admin
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.tokenEmail;
+      const user = await usersCollection.findOne({ email });
+      if (user && user.role !== "admin") {
+        return res
+          .status(403)
+          .send({ message: "only Admin can access", role: user?.role });
+      }
+      next();
+    };
+
+    ////verify chef
+    const verifyChef = async (req, res, next) => {
+      const email = req.tokenEmail;
+      const user = await usersCollection.findOne({ email });
+      if (user && user.role !== "chef") {
+        return res
+          .status(403)
+          .send({ message: "only chef can access", role: user?.role });
+      }
+      next();
+    };
 
     ////meals api
-    ////1.get all meals
+    ////1.get 6 meals for home page
     app.get("/meals", async (req, res) => {
       const meals = await mealsCollection.find().limit(6).toArray();
       res.send(meals);
@@ -74,8 +99,8 @@ async function run() {
       res.send(result);
     });
 
-    ////get created meals by chef
-    app.get("/mymeals/:email", async (req, res) => {
+    ////get  meals by chef hoyto use hoi nai
+    app.get("/mymeals/:email", verifyJWT, verifyChef, async (req, res) => {
       const email = req.params.email;
       const result = mealsCollection.find({ userEmail: email });
       const meals = await result.toArray();
@@ -89,8 +114,8 @@ async function run() {
       res.send(result);
     });
 
-    ////3.post a meal
-    app.post("/meals", async (req, res) => {
+    ////3.post a meal || create a meal || add a meal
+    app.post("/meals", verifyJWT, verifyChef, async (req, res) => {
       const meal = req.body;
       const result = await mealsCollection.insertOne(meal);
       res.send(result);
@@ -151,12 +176,12 @@ async function run() {
       const sessionId = req.body.session_id;
 
       const session = await stripe.checkout.sessions.retrieve(sessionId);
-      console.log(session);
+      // console.log(session);
 
       if (session.payment_status === "paid") {
         // Generate trackingId once
         const trackingId = generateTrackingId();
-        console.log("Generated trackingId:", trackingId);
+        // console.log("Generated trackingId:", trackingId);
 
         // Update orderCollection
         const id = session.metadata.orderId;
@@ -205,7 +230,7 @@ async function run() {
       res.send({ success: false });
     });
 
-    ////user collection create or update
+    ////user collection create or update //// all kinds of user here
     app.post("/users", async (req, res) => {
       const user = req.body;
 
@@ -215,7 +240,6 @@ async function run() {
       user.status = "active";
       const query = { email: user.email };
       const existingUser = await usersCollection.findOne(query);
-      console.log("existingUser:", !!existingUser);
 
       if (existingUser) {
         const result = await usersCollection.updateOne(query, {
@@ -228,7 +252,7 @@ async function run() {
       res.send(result);
     });
 
-    /////get user role
+    /////get user role   ///
     app.get("/users/role", verifyJWT, async (req, res) => {
       const result = await usersCollection.findOne({ email: req.tokenEmail });
       res.send({ role: result?.role });
@@ -240,6 +264,62 @@ async function run() {
       const query = { email: email };
       const userDetails = await usersCollection.findOne(query);
       res.send(userDetails);
+    });
+
+    ////become a chef request
+    app.post("/become-chef", verifyJWT, async (req, res) => {
+      const { userDetails } = req.body;
+
+      const userName = userDetails.name;
+      const email = req.tokenEmail;
+      const requestType = "chef";
+      const requestStatus = "pending";
+
+      const alreadyExist = await chefCollection.findOne({
+        userEmail: email,
+      });
+      if (alreadyExist)
+        return res.status(409).send({ message: "already exist" });
+
+      const result = await chefCollection.insertOne({
+        userName,
+        userEmail: email,
+        requestType,
+        requestStatus,
+      });
+      res.send(result);
+    });
+
+    app.get("/chef-requests", verifyJWT, verifyAdmin, async (req, res) => {
+      const result = await chefCollection.find().toArray();
+
+      res.send(result);
+    });
+
+    ////update user role
+    app.patch("/update-role", verifyJWT, verifyAdmin, async (req, res) => {
+      const { email, role } = req.body;
+      console.log(email, role);
+
+      /////////usercollection a update koreche
+      const result = await usersCollection.updateOne(
+        { email },
+        { $set: { role } }
+      );
+
+      ////jodi chef collection a exsist kore delate korte hobe
+      await chefCollection.deleteOne({ userEmail: email });
+      res.send(result);
+    });
+
+    /////get all users
+    app.get("/all-users", verifyJWT, verifyAdmin, async (req, res) => {
+      const adminEmail = req.tokenEmail;
+      const result = await usersCollection
+        .find({ email: { $ne: adminEmail } })
+        .toArray();
+
+      res.send(result);
     });
 
     /////get payment history
