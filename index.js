@@ -110,11 +110,58 @@ async function run() {
     });
 
     ////get  meals by chef hoyto use hoi nai
-    app.get("/mymeals/:email", verifyJWT, verifyChef, async (req, res) => {
-      const email = req.params.email;
+    app.get("/mymeals", verifyJWT, verifyChef, async (req, res) => {
+      const email = req.tokenEmail;
       const result = mealsCollection.find({ userEmail: email });
       const meals = await result.toArray();
       res.send(meals);
+    });
+
+    //////get my meals by id
+    app.get("/mymeals/:id", verifyJWT, verifyChef, async (req, res) => {
+      const id = req.params.id;
+
+      const query = { _id: new ObjectId(id) };
+      const meal = await mealsCollection.findOne(query);
+      res.send(meal);
+    });
+
+    //////update a meal
+    app.patch("/mymeals/:id", verifyJWT, verifyChef, async (req, res) => {
+      const id = req.params.id;
+      const newDet = req.body;
+      console.log(newDet);
+
+      const email = req.tokenEmail;
+      const filter = { _id: new ObjectId(id) };
+      const options = { upsert: true };
+      const updatedDoc = {
+        $set: {
+          foodName: newDet.foodName,
+          chefName: newDet.chefName,
+          foodImage: newDet.foodImage,
+          price: newDet.price,
+          rating: newDet.rating,
+          ingredients: newDet.ingredients,
+          estimatedDeliveryTime: newDet.estimatedDeliveryTime,
+          chefExperience: newDet.chefExperience,
+
+          userEmail: email,
+        },
+      };
+      const result = await mealsCollection.updateOne(
+        filter,
+        updatedDoc,
+        options
+      );
+      res.send(result);
+    });
+    //////delete a meal
+    app.delete("/mymeals/:id", verifyJWT, verifyChef, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await mealsCollection.deleteOne(query);
+      res.send(result);
     });
 
     ////2.get single meal
@@ -130,6 +177,14 @@ async function run() {
       const result = await mealsCollection.insertOne(meal);
       res.send(result);
     });
+    //////get chef id for created meal
+    app.get("/chefid", verifyJWT, verifyChef, async (req, res) => {
+      const email = req.tokenEmail;
+      const query = { email: email };
+      const result = await usersCollection.findOne(query);
+      res.send({ chefId: result?.chefId });
+    });
+
     /////create my orders
     app.post("/orders", async (req, res) => {
       const order = req.body;
@@ -199,7 +254,7 @@ async function run() {
         const updateDoc = {
           $set: {
             paymentStatus: "paid",
-            orderStatus: "confirmed",
+
             transectionId: session.payment_intent,
             trackingId: trackingId,
           },
@@ -310,16 +365,149 @@ async function run() {
     ////update user role
     app.patch("/update-role", verifyJWT, verifyAdmin, async (req, res) => {
       const { email, role } = req.body;
-      console.log(email, role);
+      // console.log(email, role);
+      req.body.chefId = Math.floor(1000 + Math.random() * 9000);
 
       /////////usercollection a update koreche
+      const updateFields = { role };
+      if (role === "chef") {
+        updateFields.chefId = req.body.chefId;
+      }
       const result = await usersCollection.updateOne(
         { email },
-        { $set: { role } }
+        { $set: updateFields }
       );
 
       ////jodi chef collection a exsist kore delate korte hobe
       await chefCollection.deleteOne({ userEmail: email });
+      res.send(result);
+    });
+
+    ////////become admin request
+    app.post("/become-admin", verifyJWT, async (req, res) => {
+      const { userDetails } = req.body;
+
+      const userName = userDetails.name;
+      const email = req.tokenEmail;
+      const requestType = "admin";
+      const requestStatus = "pending";
+
+      const alreadyExist = await adminRequestCollection.findOne({
+        userEmail: email,
+      });
+      if (alreadyExist)
+        return res.status(409).send({ message: "already exist" });
+
+      const result = await adminRequestCollection.insertOne({
+        userName,
+        userEmail: email,
+        requestType,
+        requestStatus,
+      });
+      res.send(result);
+    });
+
+    ///////get all admin request
+    app.get("/admin-requests", verifyJWT, verifyAdmin, async (req, res) => {
+      const result = await adminRequestCollection.find().toArray();
+      res.send(result);
+    });
+
+    //////update admin role
+    app.patch("/become-admin", verifyJWT, verifyAdmin, async (req, res) => {
+      const { email, role } = req.body;
+
+      const update = { role };
+      const result = await usersCollection.updateOne(
+        { email },
+        { $set: update }
+      );
+
+      ////jodi admin collection a exsist kore delate korte hobe
+      await adminRequestCollection.deleteOne({ userEmail: email });
+      res.send(result);
+    });
+
+    ////////if reject
+    app.patch(
+      "/become-rejectChef",
+      verifyJWT,
+      verifyAdmin,
+      async (req, res) => {
+        const { email } = req.body;
+        console.log(email);
+
+        const newStatus = "rejected";
+        const update = {
+          requestStatus: newStatus,
+        };
+
+        const result = await chefCollection.updateOne(
+          {
+            userEmail: email,
+          },
+          { $set: update }
+        );
+
+        ////admin rejects
+
+        ////jodi admin collection a exsist kore delate korte hobe
+        // await adminRequestCollection.deleteOne({ userEmail: email });
+        // res.send(result);
+
+        res.send(result);
+      }
+    );
+
+    ////admin  reject
+
+    app.patch(
+      "/become-rejectAdmin",
+      verifyJWT,
+      verifyAdmin,
+      async (req, res) => {
+        const { email } = req.body;
+
+        const newStatus = "rejected";
+        const update = {
+          requestStatus: newStatus,
+        };
+
+        const result = await adminRequestCollection.updateOne(
+          {
+            userEmail: email,
+          },
+          { $set: update }
+        );
+
+        ////jodi admin collection a exsist kore delate korte hobe
+        // await adminRequestCollection.deleteOne({ userEmail: email });
+        // res.send(result);
+
+        res.send(result);
+      }
+    );
+
+    ////make fraud
+    app.patch("/become-fraud", verifyJWT, verifyAdmin, async (req, res) => {
+      const { email } = req.body;
+
+      const newStatus = "fraud";
+      const update = {
+        status: newStatus,
+      };
+
+      const result = await usersCollection.updateOne(
+        {
+          email: email,
+        },
+        { $set: update }
+      );
+
+      ////jodi admin collection a exsist kore delate korte hobe
+      // await adminRequestCollection.deleteOne({ userEmail: email });
+      // res.send(result);
+
       res.send(result);
     });
 
@@ -358,6 +546,40 @@ async function run() {
       res.send(result);
     });
 
+    /////update review by users
+    app.patch("/reviews/:id", verifyJWT, async (req, res) => {
+      const id = req.params.id;
+      const email = req.tokenEmail;
+      const query = { foodId: id, reviewerEmail: email };
+      const newReview = req.body;
+      // console.log({ rating: newReview.rating, comment: newReview.comment });
+
+      const options = { upsert: true };
+      const updatedReview = {
+        $set: {
+          rating: newReview.rating,
+          comment: newReview.comment,
+        },
+      };
+
+      const result = await reviewCollection.updateOne(
+        query,
+        updatedReview,
+        options
+      );
+      res.send(result);
+    });
+
+    ///////delete review by users
+    app.delete("/reviews/:id", verifyJWT, async (req, res) => {
+      const id = req.params.id;
+
+      const email = req.tokenEmail;
+      const query = { foodId: id, reviewerEmail: email };
+      const result = await reviewCollection.deleteOne(query);
+      res.send(result);
+    });
+
     //////favourite meal by users
     app.post("/favourite-meal", async (req, res) => {
       const favourite = req.body;
@@ -388,6 +610,67 @@ async function run() {
       const cursor = favouriteCollection.find(query);
       const result = await cursor.toArray();
       res.send(result);
+    });
+
+    /////delete a favourite collection
+
+    app.delete("/favourite-meal/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { mealId: id };
+      const result = await favouriteCollection.deleteOne(query);
+      res.send(result);
+    });
+
+    //////get all my created meal
+    app.get("/my-meal", verifyJWT, async (req, res) => {
+      const email = req.tokenEmail;
+      const query = { email: email };
+      const cursor = mealCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+    ////get my meal order req
+    app.get("/my-meal-order/:id", verifyJWT, async (req, res) => {
+      const id = req.params.id;
+      console.log(id);
+
+      const query = { chefId: id };
+      const cursor = orderCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    /////////update order status
+    app.patch("/update-order-status/:id", async (req, res) => {
+      const id = req.params.id;
+      console.log(id);
+
+      const status = req.body;
+
+      const filter = { _id: new ObjectId(id) };
+      const options = { upsert: true };
+      const updatedDoc = {
+        $set: {
+          orderStatus: status.status,
+        },
+      };
+      const result = await orderCollection.updateOne(
+        filter,
+        updatedDoc,
+        options
+      );
+    });
+
+    // status
+    app.get("/users/status", verifyJWT, async (req, res) => {
+      const result = await usersCollection.findOne({ email: req.tokenEmail });
+      res.send({ status: result?.status });
+    });
+
+    ////chefId//
+    app.get("/users/chefId", verifyJWT, async (req, res) => {
+      const result = await usersCollection.findOne({ email: req.tokenEmail });
+      res.send({ chefId: result?.chefId });
     });
 
     /////get payment history
