@@ -96,17 +96,46 @@ async function run() {
       const meals = await mealsCollection.find().limit(6).toArray();
       res.send(meals);
     });
-    ///////1.2.get all meals for all meals page
+
+    /////2.get  all meals page ,sort and pagination  add kora
     app.get("/allmeals", async (req, res) => {
-      const { sort = "price", order = "asc" } = req.query;
-      // console.log(sort, order);
+      try {
+        const {
+          sort = "price",
+          order = "desc",
+          page = 1,
+          limit = 10,
+        } = req.query;
 
-      const sortOptions = {};
-      sortOptions[sort || "price"] = order === "asc" ? 1 : -1;
+        const pageNumber = parseInt(page);
+        const limitNumber = parseInt(limit);
+        const skip = (pageNumber - 1) * limitNumber;
 
-      const result = await mealsCollection.find().sort(sortOptions).toArray();
+        const allowedSortFields = ["price", "rating", "createdAt"];
+        const sortField = allowedSortFields.includes(sort) ? sort : "price";
 
-      res.send(result);
+        const sortOptions = {};
+        sortOptions[sortField] = order === "asc" ? 1 : -1;
+
+        const meals = await mealsCollection
+          .find()
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(limitNumber)
+          .toArray();
+
+        const totalMeals = await mealsCollection.countDocuments();
+
+        res.send({
+          meals,
+          totalMeals,
+          currentPage: pageNumber,
+          totalPages: Math.ceil(totalMeals / limitNumber),
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to load meals" });
+      }
     });
 
     ////get  meals by chef hoyto use hoi nai
