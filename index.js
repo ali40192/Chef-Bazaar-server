@@ -177,13 +177,6 @@ async function run() {
       const result = await mealsCollection.insertOne(meal);
       res.send(result);
     });
-    //////get chef id for created meal
-    app.get("/chefid", verifyJWT, verifyChef, async (req, res) => {
-      const email = req.tokenEmail;
-      const query = { email: email };
-      const result = await usersCollection.findOne(query);
-      res.send({ chefId: result?.chefId });
-    });
 
     /////create my orders
     app.post("/orders", async (req, res) => {
@@ -449,12 +442,6 @@ async function run() {
           { $set: update }
         );
 
-        ////admin rejects
-
-        ////jodi admin collection a exsist kore delate korte hobe
-        // await adminRequestCollection.deleteOne({ userEmail: email });
-        // res.send(result);
-
         res.send(result);
       }
     );
@@ -480,10 +467,6 @@ async function run() {
           { $set: update }
         );
 
-        ////jodi admin collection a exsist kore delate korte hobe
-        // await adminRequestCollection.deleteOne({ userEmail: email });
-        // res.send(result);
-
         res.send(result);
       }
     );
@@ -503,10 +486,6 @@ async function run() {
         },
         { $set: update }
       );
-
-      ////jodi admin collection a exsist kore delate korte hobe
-      // await adminRequestCollection.deleteOne({ userEmail: email });
-      // res.send(result);
 
       res.send(result);
     });
@@ -584,10 +563,11 @@ async function run() {
     app.post("/favourite-meal", async (req, res) => {
       const favourite = req.body;
 
-      // console.log(favourite);
+      console.log(favourite);
 
       const alreadyFavourite = await favouriteCollection.findOne({
         mealId: favourite.mealId,
+        userEmail: favourite.userEmail,
       });
 
       if (alreadyFavourite) {
@@ -673,39 +653,58 @@ async function run() {
       res.send({ chefId: result?.chefId });
     });
 
-    /////get payment history
-    // app.get("/payment-history/:email", async (req, res) => {
-    //   const email = req.params.email;
+    /////three in one
+    app.get("/dashboard-statistics", async (req, res) => {
+      try {
+        const totalPayment = await paymentCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                totalAmount: { $sum: "$price" },
+              },
+            },
+          ])
+          .toArray();
 
-    //   const query = { customer_email: email };
-    //   const cursor = paymentCollection.find(query);
-    //   const payments = await cursor.toArray();
-    //   res.send(payments);
-    // });
+        const totalUsers = await usersCollection
+          .aggregate([{ $count: "totalUsers" }])
+          .toArray();
 
-    ////4.update a meal
-    // app.put("/meals/:id", async (req, res) => {
-    //   const id = req.params.id;
-    //   const query = { _id: new ObjectId(id) };
-    //   const meal = req.body;
-    //   const options = { upsert: true };
-    //   const updatedMeal = {
-    //     $set: {
-    //       name: meal.name,
-    //       description: meal.description,
-    //     }
-    //   }
-    // })
+        const orderStatusCounts = await orderCollection
+          .aggregate([
+            {
+              $group: {
+                _id: "$orderStatus",
+                count: { $sum: 1 },
+              },
+            },
+          ])
+          .toArray();
 
-    ///delete a meal
-    // app.delete("/meals/:id", async (req, res) => {
-    //   const id = req.params.id;
-    //   const query = { _id: new ObjectId(id) };
-    //   const result = await mealsCollection.deleteOne(query);
-    //   res.send(result);
-    // });
+        const statusMap = {};
+        orderStatusCounts.forEach((item) => {
+          statusMap[item._id] = item.count;
+        });
 
-    // Send a ping to confirm a successful connection
+        res.send({
+          totalAmount: totalPayment[0]?.totalAmount || 0,
+          totalUsers: totalUsers[0]?.totalUsers || 0,
+          pendingOrders: statusMap["Pending"] || 0,
+          deliveredOrders: statusMap["delivered"] || 0,
+          cancelledOrders: statusMap["cancelled"] || 0,
+        });
+      } catch (error) {
+        res.status(500).send({ message: "Server Error", error });
+      }
+    });
+
+    //////get all rewiew for home
+    app.get("/reviewhome", async (req, res) => {
+      const result = await reviewCollection.find({}).toArray();
+      res.send(result);
+    });
+
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
