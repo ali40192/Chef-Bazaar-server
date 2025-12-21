@@ -12,8 +12,14 @@ const { log } = require("console");
 
 const admin = require("firebase-admin");
 
-// Initialize Firebase Admin (replace with your service account key path or env vars)
-const serviceAccount = require("./chefbazarfirebaseadminSdk.json"); // Download from Firebase Console
+// const serviceAccount = require("./chefbazarfirebaseadminSdk.json");
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8"
+);
+const serviceAccount = JSON.parse(decoded);
+
+// Download from Firebase Console
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
@@ -54,7 +60,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const db = client.db("chef_bazaar_db");
     const mealsCollection = db.collection("meals");
@@ -641,7 +647,7 @@ async function run() {
     ////get my meal order req
     app.get("/my-meal-order/:id", verifyJWT, async (req, res) => {
       const id = req.params.id;
-      console.log(id);
+      // console.log(typeof id); //string
 
       const query = { chefId: id };
       const cursor = orderCollection.find(query);
@@ -652,7 +658,6 @@ async function run() {
     /////////update order status
     app.patch("/update-order-status/:id", async (req, res) => {
       const id = req.params.id;
-      console.log(id);
 
       const status = req.body;
 
@@ -668,6 +673,7 @@ async function run() {
         updatedDoc,
         options
       );
+      res.send(result);
     });
 
     // status
@@ -734,10 +740,10 @@ async function run() {
       res.send(result);
     });
 
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
   }
 }
